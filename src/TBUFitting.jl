@@ -8,7 +8,8 @@ using DiffEqParamEstim
 using Turing
 using Statistics
 using StatsBase
-using Distributions: Uniform,Normal,Exponential,InverseGamma,truncated
+using Distributions: Uniform,Normal,Exponential,InverseGamma,truncated,Pareto
+using Infiltrator
 
 import Base: show,names,Dict
 import Polynomials: fit 

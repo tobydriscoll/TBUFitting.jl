@@ -27,7 +27,6 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
     syms = [Turing.@varname(θ[i]) for i in 1:N]
     # likelihood = (u,p,t,σ) -> MvLogNormal(MvNormal(log.(u),σ*ones(length(u))))
     likelihood = (u,p,t,σ) -> MvNormal(u,σ*ones(length(u)))
-    
     Turing.@model function mf(x,::Type{T}=Float64) where {T<:Real}
         θ = Vector{T}(undef,N)
         for i in 1:N
