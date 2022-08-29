@@ -1,3 +1,11 @@
+# h(t): film thickness (relative to initial)
+# c(t): film osmolarity (relative to initial)
+
+# <:Quantity types have dimensional units, <:Real types are dimensionless
+
+
+# Create a function that computes FL intensity as a function of h and c.
+# Depends on initial FL and Naperian constant
 function intensity(C::ModelConstants)
 	f₀ = C.f₀
 	ϕ = C.ϕ
@@ -6,8 +14,13 @@ function intensity(C::ModelConstants)
 	return (h,c) -> II(h,c)/I₀
 end
 
+#######################################################################
+# Parent type for all the ODE models
+#######################################################################
+
 abstract type AbstractModel end 
 
+# Create an IVP for a given model instance.
 function makeivp(M::AbstractModel)
 	Pc = M.constants.Pc
 	function ode!(du,u,p,t)
@@ -20,14 +33,15 @@ function makeivp(M::AbstractModel)
 	return ODEProblem(ode!,[1.,1.],(0.,1.),M.parameters)
 end
 
+# Convenience access functions for all models
 constants(M::AbstractModel) = M.constants
 timescale(M::AbstractModel) = M.constants.ts
 parameters(M::AbstractModel) = uconvert.(units(M),M.parameters)
 nondimensionalize(M::AbstractModel) = nondimensionalize(M,parameters(M)) 
 isknown(M::AbstractModel) = !isnothing(M.solution)
 strain(M::AbstractModel) = strain(M,nondimensionalize(M,M.parameters))
-#strain(M::AbstractModel,p::AbstractVector{<:Real}) = t ->  strain(t,M,p)
 
+# Solve a particular model type at given dimensional parameters
 function solve(M::AbstractModel,p̂::AbstractVector{<:Quantity})
 	ivp = makeivp(M)
 	p = nondimensionalize(M,p̂)
@@ -37,14 +51,17 @@ function solve(M::AbstractModel,p̂::AbstractVector{<:Quantity})
 	end
 	return typeof(M)(M.constants,p̂,solution)
 end
+
+# Convert nondimensional parameters and solve
 solve(M::AbstractModel,p::AbstractVector{<:Real}) = solve(M,dimensionalize(M,p))
 
-# Solution can handle either dimensional or dimensionless time
+# Access solution and intensity functions for either dimensional or dimensionless time
 solution(M::AbstractModel,t::Real;idxs=nothing) = M.solution(t;idxs)
 solution(M::AbstractModel) = (t;kwargs...) -> solution(M,t;kwargs...)
 intensity(M::AbstractModel) = t -> intensity(M.constants)(solution(M,t)...)
 intensity(M::AbstractModel,t) = intensity(M.constants)(solution(M,t)...)
 
+# Compact display
 function show(io::IO,M::AbstractModel) 
 	if isempty(M.parameters)
 		print("$(typeof(M)) with unknown parameters")
@@ -57,12 +74,14 @@ function show(io::IO,M::AbstractModel)
 	end
 end
 
+# Convert model to a dict of constants and model parameter values
 function Dict(m::AbstractModel)
 	p = uconvert.(units(m),parameters(m))
 	Dict( ("constants"=>Dict(m.constants), "parameters"=>p) )
 end
 
-# cheat: use the number of parameters to determine model type on the fly
+# Universal constructor
+# Kludge: use the number of parameters to determine model type on the fly
 function Model(con::ModelConstants,p::AbstractVector{<:Quantity})
 	if length(p)==1
 		ModelO(con,p)
@@ -75,32 +94,43 @@ function Model(con::ModelConstants,p::AbstractVector{<:Quantity})
 	end
 end
 
+# Proper constructors
 Model(::Val{'O'},c::ModelConstants) = ModelO(c)
 Model(::Val{'F'},c::ModelConstants) = ModelF(c)
 Model(::Val{'D'},c::ModelConstants) = ModelD(c)
 Model(::Val{'M'},c::ModelConstants) = ModelM(c)
 Model(::Val{'Q'},c::ModelConstants) = ModelQ(c)
 
+#######################################################################
+# Specific model types
+#######################################################################
 
 ## Model M 
+# Strain can relax from one nonzero value to another 
 struct ModelM <: AbstractModel 
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
 end
 
+# Constructors
 ModelM(c::ModelConstants) = ModelM(c,Quantity[],nothing)
 ModelM(c::ModelConstants,p̂::AbstractVector{<:Quantity}) = solve(ModelM(c),p̂)
 
+# Parameter names and units
 names(::ModelM) = ["v","a","b₁","b₂"]
 units(::ModelM) = [u"μm/minute", u"s^-1", u"s^-1", u"s^-1"]
+
+# Access strain function
 strain(M::ModelM,p::AbstractVector) = t -> p[2] + p[3] * exp(-p[4]*t)
 
+# Convert to dimensional parameters
 function dimensionalize(M::ModelM,p)
 	c = M.constants
 	return [p[1]*c.h₀/c.ts, p[2]/c.ts, p[3]/c.ts, p[4]/c.ts]
 end
 
+# Convert to nondimensional parameters
 function nondimensionalize(M::ModelM,p̂)
 	c = M.constants
 	return uconvert.( Unitful.NoUnits, [p̂[1]*c.ts/c.h₀, p̂[2]*c.ts, p̂[3]*c.ts, p̂[4]*c.ts] )
@@ -114,6 +144,8 @@ function nondimensionalize(M::ModelM,p̂::AbstractVector{<:Real})
 end
 
 ## Model Q
+# experimental (not useful)
+
 struct ModelQ <: AbstractModel 
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
@@ -148,24 +180,32 @@ function nondimensionalize(M::ModelQ,p̂::AbstractVector{<:Real})
 end
 
 ## Model D
+# Strain decays from nonzero to zero
+
 struct ModelD <: AbstractModel 
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
 end
 
+# Constructors
 ModelD(c::ModelConstants) = ModelD(c,Quantity[],nothing)
 ModelD(c::ModelConstants,p̂::AbstractVector{<:Quantity}) = solve(ModelD(c),p̂)
 
+# Parameter names and units
 names(::ModelD) = ["v","b₁","b₂"]
 units(::ModelD) = [u"μm/minute", u"s^-1", u"s^-1"]
+
+# Access to strain function
 strain(::ModelD,p::AbstractVector) = t -> p[2] * exp(-p[3]*t)
 
+# Convert to dimensional parameters
 function dimensionalize(M::ModelD,p)
 	c = M.constants
 	return [p[1]*c.h₀/c.ts, p[2]/c.ts, p[3]/c.ts]
 end
 
+# Convert to nondimensional parameters
 function nondimensionalize(M::ModelD,p̂::AbstractVector{<:Quantity})
 	c = M.constants
 	return uconvert.( Unitful.NoUnits, [ p̂[1]*c.ts/c.h₀, p̂[2]*c.ts, p̂[3]*c.ts ] )
@@ -178,24 +218,31 @@ function nondimensionalize(M::ModelD,p̂::AbstractVector{<:Real})
 end
 
 ## Model F
+# Constant strain rate
 struct ModelF <: AbstractModel 
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
 end
 
+# Constructors
 ModelF(c::ModelConstants) = ModelF(c,Quantity[],nothing)
 ModelF(c::ModelConstants,p̂::AbstractVector{<:Quantity}) = solve(ModelF(c),p̂)
 
+# Parameter names and units
 names(::ModelF) = ["v","a"]
 units(::ModelF) = [u"μm/minute", u"s^-1"]
+
+# Access to strain function
 strain(::ModelF,p::AbstractVector) = t -> p[2]
 
+# Convert to dimensional parameters
 function dimensionalize(M::ModelF,p)
 	c = M.constants
 	return [p[1]*c.h₀/c.ts, p[2]/c.ts ]
 end
 
+# Convert to nondimensional parameters
 function nondimensionalize(M::ModelF,p̂::AbstractVector{<:Quantity})
 	c = M.constants
 	return uconvert.( Unitful.NoUnits, [ p̂[1]*c.ts/c.h₀, p̂[2]*c.ts ] )
@@ -209,24 +256,31 @@ function nondimensionalize(M::ModelF,p̂::AbstractVector{<:Real})
 end
 
 ## Model O
+# Evaporation only (no tangential strain or flow)
 struct ModelO <: AbstractModel 
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
 end
 
+# Constructors
 ModelO(c::ModelConstants) = ModelO(c,Quantity[],nothing)
 ModelO(c::ModelConstants,p̂::AbstractVector{<:Quantity}) = solve(ModelO(c),p̂)
 
+# Parameter names and units
 names(::ModelO) = ["v"]
 units(::ModelO) = [u"μm/minute"]
+
+# Access to strain function
 strain(::ModelO,p::AbstractVector) = t -> 0
 
+# Convert to dimensional parameters
 function dimensionalize(M::ModelO,p)
 	c = M.constants
 	return [p[1]*c.h₀/c.ts ]
 end
 
+# Convert to nondimensional parameters
 function nondimensionalize(M::ModelO,p̂)
 	c = M.constants
 	return uconvert.( Unitful.NoUnits, [ p̂[1]*c.ts/c.h₀] )
