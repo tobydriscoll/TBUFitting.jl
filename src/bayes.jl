@@ -30,7 +30,7 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
     syms = [Turing.@varname(θ[i]) for i in 1:N]
     # likelihood = (u,p,t,σ) -> MvLogNormal(MvNormal(log.(u),σ*ones(length(u))))
     likelihood = (u,p,t,σ) -> MvNormal(u,σ*ones(length(u)))
-    
+
     Turing.@model function mf(x,::Type{T}=Float64) where {T<:Real}
         θ = Vector{T}(undef,N)
         for i in 1:N
@@ -38,7 +38,7 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
         end
         p = nondimensionalize(M,θ)
         sol = OrdinaryDiffEq.solve(remake(ivp,p=p),AutoVern7(KenCarp4()),saveat=t,reltol=1e-8,abstol=1e-7)
-        if (sol.retcode !== :Success) 
+        if (sol.retcode != ReturnCode.Success)
             @info sol.retcode
             Turing.acclogp!(_varinfo, -Inf)
             return
@@ -49,7 +49,7 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
         Is = Ifun.(hs,cs)
         h_inc = Inf#something(findfirst(diff(hs) .> 0),Inf)
         I_inc = Inf#something(findfirst(diff(Is) .> 0),Inf)
-        k_inc = (sol.retcode !== :Success) ? 1 : min(h_inc,I_inc)
+        k_inc = (sol.retcode != ReturnCode.Success) ? 1 : min(h_inc,I_inc)
 
         if !isinf(k_inc)
             k_inc = Int(k_inc)
@@ -57,11 +57,11 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
             Turing.acclogp!(_varinfo, log(t[k_inc+1]))
             return
         end
-        
+
         # σ = nothing
-        #try 
+        #try
             x ~ likelihood(Is,θ,Inf,σ)
-        #catch except 
+        #catch except
          #   @show Float64.(hs)
           #  @show Float64.(Is)
            # @show k_inc
@@ -69,7 +69,7 @@ function bayes(M::AbstractModel,t::AbstractVector{<:Real},I::AbstractVector;num_
         #end
         return
     end false
-    
+
     model = mf(I)
     if threads > 1
         result = sample(model,Turing.NUTS(0.65),MCMCThreads(),num_samples÷threads,threads; progress=true)

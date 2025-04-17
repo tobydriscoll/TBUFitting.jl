@@ -18,7 +18,7 @@ end
 # Parent type for all the ODE models
 #######################################################################
 
-abstract type AbstractModel end 
+abstract type AbstractModel end
 
 # Create an IVP for a given model instance.
 function makeivp(M::AbstractModel)
@@ -37,7 +37,7 @@ end
 constants(M::AbstractModel) = M.constants
 timescale(M::AbstractModel) = M.constants.ts
 parameters(M::AbstractModel) = uconvert.(units(M),M.parameters)
-nondimensionalize(M::AbstractModel) = nondimensionalize(M,parameters(M)) 
+nondimensionalize(M::AbstractModel) = nondimensionalize(M,parameters(M))
 isknown(M::AbstractModel) = !isnothing(M.solution)
 strain(M::AbstractModel) = strain(M,nondimensionalize(M,M.parameters))
 
@@ -46,7 +46,7 @@ function solve(M::AbstractModel,p̂::AbstractVector{<:Quantity})
 	ivp = makeivp(M)
 	p = nondimensionalize(M,p̂)
 	solution = OrdinaryDiffEq.solve(remake(ivp,p=p),Tsit5(),reltol=1e-10,abstol=1e-11)
-	if solution.retcode !== :Success 
+	if solution.retcode != ReturnCode.Success
 		@warn "Solution was terminated without success, final time = $(solution.t[end])"
 	end
 	return typeof(M)(M.constants,p̂,solution)
@@ -62,7 +62,7 @@ intensity(M::AbstractModel) = t -> intensity(M.constants)(solution(M,t)...)
 intensity(M::AbstractModel,t) = intensity(M.constants)(solution(M,t)...)
 
 # Compact display
-function show(io::IO,M::AbstractModel) 
+function show(io::IO,M::AbstractModel)
 	if isempty(M.parameters)
 		print("$(typeof(M)) with unknown parameters")
 	else
@@ -100,14 +100,15 @@ Model(::Val{'F'},c::ModelConstants) = ModelF(c)
 Model(::Val{'D'},c::ModelConstants) = ModelD(c)
 Model(::Val{'M'},c::ModelConstants) = ModelM(c)
 Model(::Val{'Q'},c::ModelConstants) = ModelQ(c)
+Model(::Val{'V'},c::ModelConstants) = ModelV(c)
 
 #######################################################################
 # Specific model types
 #######################################################################
 
-## Model M 
-# Strain can relax from one nonzero value to another 
-struct ModelM <: AbstractModel 
+## Model M
+# Strain can relax from one nonzero value to another
+struct ModelM <: AbstractModel
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
@@ -146,7 +147,7 @@ end
 ## Model Q
 # experimental (not useful)
 
-struct ModelQ <: AbstractModel 
+struct ModelQ <: AbstractModel
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
@@ -182,7 +183,7 @@ end
 ## Model D
 # Strain decays from nonzero to zero
 
-struct ModelD <: AbstractModel 
+struct ModelD <: AbstractModel
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
@@ -219,7 +220,7 @@ end
 
 ## Model F
 # Constant strain rate
-struct ModelF <: AbstractModel 
+struct ModelF <: AbstractModel
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
@@ -257,7 +258,7 @@ end
 
 ## Model O
 # Evaporation only (no tangential strain or flow)
-struct ModelO <: AbstractModel 
+struct ModelO <: AbstractModel
 	constants::ModelConstants
 	parameters::AbstractVector{<:Quantity}
 	solution
@@ -290,4 +291,56 @@ function nondimensionalize(M::ModelO,p̂::AbstractVector{<:Real})
 	c = M.constants
 	a = ustrip(uconvert(unit(1/units(M)[1]),c.ts/c.h₀))
 	return [ p̂[1]*a ]
+end
+
+
+## Model V
+# Strain decays from nonzero to zero, evaporation is shut down by van der Waals
+
+struct ModelV <: AbstractModel
+	constants::ModelConstants
+	parameters::AbstractVector{<:Quantity}
+	solution
+end
+
+# Constructors
+ModelV(c::ModelConstants) = ModelV(c,Quantity[],nothing)
+ModelV(c::ModelConstants,p̂::AbstractVector{<:Quantity}) = solve(ModelV(c),p̂)
+
+# Parameter names and units
+names(::ModelV) = ["v","b₁","b₂","h_min"]
+units(::ModelV) = [u"μm/minute", u"s^-1", u"s^-1", u"μm"]
+
+# Access to strain function
+strain(::ModelV,p::AbstractVector) = t -> p[2] * exp(-p[3]*t)
+
+# Convert to dimensional parameters
+function dimensionalize(M::ModelV,p)
+	c = M.constants
+	return [p[1]*c.h₀/c.ts, p[2]/c.ts, p[3]/c.ts, p[4]*c.h₀]
+end
+
+# Convert to nondimensional parameters
+function nondimensionalize(M::ModelV,p̂::AbstractVector{<:Quantity})
+	c = M.constants
+	return uconvert.( Unitful.NoUnits, [ p̂[1]*c.ts/c.h₀, p̂[2]*c.ts, p̂[3]*c.ts, p̂[4]/c.h₀ ] )
+end
+
+function nondimensionalize(M::ModelV,p̂::AbstractVector{<:Real})
+	c = M.constants
+	a = ustrip(uconvert(unit(1/units(M)[1]),c.ts/c.h₀))
+	b = ustrip(uconvert(unit(1/units(M)[2]),c.ts))
+	return [ p̂[1]*a, p̂[2]*b, p̂[3]*b, p̂[4]*b/a]
+end
+
+function makeivp(M::ModelV)
+	Pc = M.constants.Pc
+	function ode!(du,u,p,t)
+		h, c = u
+		g = strain(M,p)
+		gt = g(t)
+		du[1] = -gt*h + Pc*(c-1) - p[1] * (1 - (p[4]/h)^3)
+		du[2] = -gt*c - du[1]*c / h
+	end
+	return ODEProblem(ode!,[1.,1.],(0.,1.),M.parameters)
 end
